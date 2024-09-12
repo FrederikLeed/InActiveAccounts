@@ -40,31 +40,8 @@ function Write-Log {
         [string]$Message
     )
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Add-Content -Path $LogFilePath -Value "$timestamp - $Message"
-}
-
-# Function to get the most recent LastLogonDate from all DCs in the domain
-function Get-MostRecentLastLogon {
-    param (
-        [string]$UserDN,
-        [string]$DomainName
-    )
-
-    $mostRecentLogon = $null
-    $dcs = Get-ADDomainController -Server $DomainName -Filter *
-
-    foreach ($dc in $dcs) {
-        try {
-            $user = Get-ADUser -Server $dc.HostName -Identity $UserDN -Properties LastLogonDate
-            if ($user.LastLogonDate -and ($null -eq $mostRecentLogon -or $user.LastLogonDate -gt $mostRecentLogon)) {
-                $mostRecentLogon = $user.LastLogonDate
-            }
-        } catch {
-            Write-Log "ERROR: Failed to retrieve LastLogonDate for user $UserDN on DC $($dc.HostName). Error: $_"
-        }
-    }
-
-    return $mostRecentLogon
+    #Add-Content -Path $LogFilePath -Value "$timestamp - $Message"
+    Write-Output "$timestamp - $Message"
 }
 
 # Import the exception list
@@ -121,10 +98,11 @@ ForEach ($User in $Users) {
     }
     
     $DataLine = [PSCustomObject][Ordered]@{
-        User = $User.displayName
-        UserId = $User.ID
-        onPremisesImmutableId = ($User.onPremisesImmutableId)
-        onPremisesImmutableIdObjectID = $onPremisesImmutableIdObjectID
+        User                             = $User.displayName
+        UserId                           = $User.ID
+        onPremisesImmutableId            = ($User.onPremisesImmutableId)
+        onPremisesImmutableIdObjectID    = $onPremisesImmutableIdObjectID
+        LastLogonDate                    = $LastSuccessfulSignIn
         'Last successful sign in'        = $LastSuccessfulSignIn
         'Last sign in'                   = $LastSignIn
         'Days since successful sign in'  = $DaysSinceLastSuccessfulSignIn
@@ -141,13 +119,13 @@ $domains = ([System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest(
 foreach ($domain in $domains) {
     try {
         # Get all enabled user accounts in the domain
-        $users = Get-ADUser -Filter { Enabled -eq $true } -Server $domain.Name -Properties DistinguishedName, SamAccountName, DisplayName, Manager, ObjectSID, ObjectID
+        $users = Get-ADUser -Filter { Enabled -eq $true } -Server $domain.Name -Properties DistinguishedName, SamAccountName, DisplayName, Manager, ObjectSID, ObjectGuid, lastlogondate
 
         foreach ($user in $users) {
             if ($ExceptionList -contains $user.ObjectSID.Value) {
                 #Write-Log "Skipping user $($user.SamAccountName) - found in exception list"
             } else {
-                $lastLogon = Get-MostRecentLastLogon -UserDN $user.DistinguishedName -DomainName $domain.Name
+                #$lastLogon = Get-MostRecentLastLogon -UserDN $user.DistinguishedName -DomainName $domain.Name
                 
                 $manager = $null
                 if ($user.Manager) {
@@ -159,9 +137,9 @@ foreach ($domain in $domains) {
                     SamAccountName    = $user.SamAccountName
                     DisplayName       = $user.DisplayName
                     Manager           = $manager
-                    LastLogonDate     = $lastLogon
+                    LastLogonDate     = $user.lastlogondate
                     ObjectSID         = $user.ObjectSID.Value
-                    ObjectID          = $users.ObjectID
+                    ObjectGuid        = $user.ObjectGuid
                 }
             }
         }
@@ -174,8 +152,8 @@ foreach ($domain in $domains) {
 $MergedUsers = @()
 
 foreach ($adUser in $ADUsers) {
-    # Find the corresponding Entra user based on the onPremisesImmutableIdObjectID and ObjectID match
-    $matchingEntraUser = $EntraUsers | Where-Object { $_.onPremisesImmutableIdObjectID -eq $adUser.ObjectID }
+    # Find the corresponding Entra user based on the onPremisesImmutableIdObjectID and ObjectGuid match
+    $matchingEntraUser = $EntraUsers | Where-Object { $_.onPremisesImmutableIdObjectID -eq $adUser.ObjectGuid }
     
     # Create a new PSCustomObject starting with the AD user properties
     $MergedUser = [PSCustomObject]@{}
@@ -203,4 +181,8 @@ foreach ($adUser in $ADUsers) {
 }
 
 # Output the merged users in a GridView for easy inspection
+($MergedUsers.where{$_.LastLogonDate -lt $thresholdDate -and $_.Entra_LastLogonDate -lt $thresholdDate}) | select-object -first 1
+$MergedUsers.where{$_.LastLogonDate -lt $thresholdDate -and $_.Entra_LastLogonDate -and $_.Entra_LastLogonDate -lt $thresholdDate} | Out-GridView
+
+| Select-Object -first 1
 $MergedUsers.where{$_.LastLogonDate -lt $thresholdDate} |  Out-GridView -Title "Merged AD and Entra Users"
