@@ -1,26 +1,36 @@
 <#
 .SYNOPSIS
-    This script identifies inactive user accounts from an Active Directory multi-domain forest based on the LastLogonDate attribute.
+    This script identifies inactive user accounts from both Active Directory and Azure AD (Entra ID) based on logon dates.
 
 .DESCRIPTION
-    The script searches all domains in a forest for user accounts that have not logged on within a specified number of days. It will then output these inactive accounts to a GridView, except for those listed in an exception list that uses ObjectSIDs.
+    The script searches all domains in a forest for Active Directory user accounts that have not logged on within a specified number of days based on the LastLogonDate attribute.
+    Additionally, it fetches user accounts from Azure AD (Entra ID) and compares their last sign-in activity.
+    User accounts from both sources are merged, and the latest logon date is determined by comparing AD's LastLogonDate and Entra's LastSignInDate.
+    Inactive accounts (those whose latest logon date is earlier than a specified threshold) are displayed in a GridView for easy review.
+    Accounts listed in an exception list (by ObjectSID) are excluded from the results.
 
 .PARAMETER InactivityDays
-    The number of days of inactivity after which a user account will be considered inactive.
+    The number of days of inactivity after which a user account will be considered inactive. The script calculates the threshold date by subtracting the number of days from the current date.
 
 .PARAMETER ExceptionListPath
-    Path to a text file containing the ObjectSIDs of user accounts that should be excluded, regardless of their activity status.
+    Path to a text file containing the ObjectSIDs of user accounts that should be excluded from the analysis, regardless of their activity status.
 
 .PARAMETER LogFilePath
-    Path to the log file where actions and errors will be recorded.
+    Path to the log file where actions, errors, and status updates will be recorded.
 
 .EXAMPLE
     .\Get-InactiveADAccounts.ps1 -InactivityDays 365 -ExceptionListPath "C:\Path\To\ExceptionList.txt" -LogFilePath "C:\Path\To\LogFile.txt"
 
+    This example identifies all user accounts in the AD forest that have been inactive for more than 365 days, excluding any users listed in the specified exception file. The results are displayed in a GridView, and actions are logged to the specified log file.
+
 .NOTES
-    Author: Your Name
+    Author: Frederik Leed
     Date: 2024-08-26
-    Version: 1.1
+    Version: 1.2
+
+    The script utilizes the Microsoft Graph SDK to connect to Azure AD (Entra ID) and retrieve user sign-in activity.
+    It requires appropriate Graph API permissions, such as `AuditLog.Read.All` and `Directory.Read.All`.
+    It requires PowerShell modules ActiveDirectory, Microsoft.Graph
 #>
 
 param (
@@ -40,22 +50,26 @@ function Write-Log {
         [string]$Message
     )
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    #Add-Content -Path $LogFilePath -Value "$timestamp - $Message"
-    Write-Output "$timestamp - $Message"
+    Add-Content -Path $LogFilePath -Value "$timestamp - $Message"
+    #Write-Output "$timestamp - $Message"
 }
 
 # Import the exception list
 if (-Not (Test-Path $ExceptionListPath)) {
     Write-Log "ERROR: Exception list file not found at $ExceptionListPath"
-    exit 1
 }
 
-$ExceptionList = Get-Content -Path $ExceptionListPath | ForEach-Object { $_.Trim() }
-#Write-Log "Loaded exception list from $ExceptionListPath"
+Try{
+    $ExceptionList = Get-Content -Path $ExceptionListPath | ForEach-Object { $_.Trim() }
+    Write-Log "Loaded exception list from $ExceptionListPath"
+}catch{
+    Write-Log "Failed loaded exception list"
+}
+
 
 # Get the date threshold for inactivity
 $thresholdDate = (Get-Date).AddDays(-$InactivityDays)
-#Write-Log "Inactivity threshold date: $thresholdDate"
+Write-Log "Inactivity threshold date: $thresholdDate"
 
 # Connect to the Graph SDK with the correct permissions
 Connect-MgGraph -NoWelcome -Scopes AuditLog.Read.All, Directory.Read.All
@@ -125,8 +139,6 @@ foreach ($domain in $domains) {
             if ($ExceptionList -contains $user.ObjectSID.Value) {
                 #Write-Log "Skipping user $($user.SamAccountName) - found in exception list"
             } else {
-                #$lastLogon = Get-MostRecentLastLogon -UserDN $user.DistinguishedName -DomainName $domain.Name
-                
                 $manager = $null
                 if ($user.Manager) {
                     $manager = (Get-ADUser -Identity $user.Manager).Name
@@ -152,6 +164,12 @@ foreach ($domain in $domains) {
 $MergedUsers = @()
 
 foreach ($adUser in $ADUsers) {
+    # Reset the variables for each iteration to avoid carrying over from the previous object
+    $lastLogonDate = $null
+    $entraLastLogonDate = $null
+    $matchingEntraUser = $null
+    $LatestLogonDate = $null
+
     # Find the corresponding Entra user based on the onPremisesImmutableIdObjectID and ObjectGuid match
     $matchingEntraUser = $EntraUsers | Where-Object { $_.onPremisesImmutableIdObjectID -eq $adUser.ObjectGuid }
     
@@ -176,12 +194,47 @@ foreach ($adUser in $ADUsers) {
         }
     }
 
+    if ($MergedUser.LastLogonDate) {
+        try {
+            # Attempt to parse the date in both formats for safety
+            $lastLogonDate = [datetime]$MergedUser.LastLogonDate
+        } catch {
+            Write-Warning "Could not parse LastLogonDate for user: $($MergedUser.DisplayName)"
+        }
+    }
+
+    if ($MergedUser.Entra_LastLogonDate) {
+        try {
+            # Attempt to parse the Entra LastLogonDate
+            $entraLastLogonDate = [datetime]$MergedUser.Entra_LastLogonDate
+        } catch {
+            Write-Warning "Could not parse Entra_LastLogonDate for user: $($MergedUser.DisplayName)"
+        }
+    }    
+    # Compare the two dates and return the latest one, if both exist
+    if ($lastLogonDate -and $entraLastLogonDate) {
+        if ($lastLogonDate -gt $entraLastLogonDate) {
+            $LatestLogonDate = $lastLogonDate
+        } else {
+            $LatestLogonDate = $entraLastLogonDate
+        }
+    } elseif ($lastLogonDate) {
+        $LatestLogonDate = $lastLogonDate
+    } elseif ($entraLastLogonDate) {
+        $LatestLogonDate = $entraLastLogonDate
+    } else {
+        $LatestLogonDate = $null
+    }
+
+    # Add the calculated LatestLogonDate to the merged object
+    $MergedUser | Add-Member -MemberType NoteProperty -Name "LatestLogonDate" -Value $LatestLogonDate
+
     # Add the merged object to the MergedUsers array
     $MergedUsers += $MergedUser
 }
 
 # Output the merged users in a GridView for easy inspection
-$MergedUsers | Out-GridHtml
 
-($MergedUsers.where{$_.LastLogonDate -lt $thresholdDate -and $_.Entra_LastLogonDate -lt $thresholdDate}) | select-object -first 1
-$MergedUsers.where{$_.LastLogonDate -lt $thresholdDate -and $_.Entra_LastLogonDate -and $_.Entra_LastLogonDate -lt $thresholdDate} | Out-GridView
+$MergedUsers.where{$_.LatestLogonDate -and $_.LatestLogonDate -lt $thresholdDate } | ´
+    Select-Object samaccountname, LastLogonDate, Entra_LastLogonDate, LatestLogonDate | ´
+        out-gridview
