@@ -181,8 +181,7 @@ foreach ($adUser in $ADUsers) {
 }
 
 # Output the merged users in a GridView for easy inspection
+$MergedUsers | Out-GridHtml
+
 ($MergedUsers.where{$_.LastLogonDate -lt $thresholdDate -and $_.Entra_LastLogonDate -lt $thresholdDate}) | select-object -first 1
 $MergedUsers.where{$_.LastLogonDate -lt $thresholdDate -and $_.Entra_LastLogonDate -and $_.Entra_LastLogonDate -lt $thresholdDate} | Out-GridView
-
-| Select-Object -first 1
-$MergedUsers.where{$_.LastLogonDate -lt $thresholdDate} |  Out-GridView -Title "Merged AD and Entra Users"
