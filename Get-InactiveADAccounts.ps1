@@ -234,7 +234,6 @@ foreach ($adUser in $ADUsers) {
 }
 
 # Output the merged users in a GridView for easy inspection
-
-$MergedUsers.where{$_.LatestLogonDate -and $_.LatestLogonDate -lt $thresholdDate } | ´
-    Select-Object samaccountname, LastLogonDate, Entra_LastLogonDate, LatestLogonDate | ´
+$MergedUsers.where{$_.LatestLogonDate -and $_.LatestLogonDate -lt $thresholdDate } | `
+    Select-Object samaccountname, LastLogonDate, Entra_LastLogonDate, LatestLogonDate | `
         out-gridview
