@@ -76,7 +76,8 @@ Connect-MgGraph -NoWelcome -Scopes AuditLog.Read.All, Directory.Read.All
 
 # Find licensed entra user accounts
 $Headers = @{ConsistencyLevel="Eventual"}  
-$Uri = "https://graph.microsoft.com/beta/users?`$count=true&`$filter=(assignedLicenses/`$count ne 0 and userType eq 'Member')&$`top=999&`$select=id, displayName, usertype, signInActivity, onPremisesImmutableId"
+#$Uri = "https://graph.microsoft.com/beta/users?`$count=true&`$filter=(assignedLicenses/`$count ne 0 and userType eq 'Member')&$`top=999&`$select=id, displayName, usertype, signInActivity, onPremisesImmutableId"
+$Uri = "https://graph.microsoft.com/beta/users?`$count=true&`$filter=(userType eq 'Member')&$`top=999&`$select=id, displayName, usertype, signInActivity, onPremisesImmutableId"
 [array]$Data = Invoke-MgGraphRequest -Uri $Uri -Headers $Headers
 [array]$Users = $Data.Value
 
