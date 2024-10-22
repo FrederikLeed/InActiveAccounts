@@ -1,6 +1,8 @@
 # Get-InactiveADAccounts.ps1
 
-This PowerShell script identifies inactive user accounts from both Active Directory and Azure AD (Entra ID) by comparing the last logon dates. It searches all domains in an AD forest and merges the results with Azure AD user sign-in activity to identify accounts that have been inactive for a specified number of days.
+This PowerShell script identifies inactive user accounts from both Active Directory and Entra ID (Azure AD) by comparing the last logon dates. It searches all domains in an AD forest and merges the results with Entra ID user sign-in activity to identify accounts that have been inactive for a specified number of days.
+
+![alt text](image.png)
 
 ## Features
 
