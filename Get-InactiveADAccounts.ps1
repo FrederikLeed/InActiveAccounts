@@ -44,6 +44,17 @@ param (
     [string]$LogFilePath
 )
 
+# Default log file logic
+if (-not $LogFilePath) {
+    # Get the script name and directory
+    $scriptPath = $MyInvocation.MyCommand.Path
+    $scriptDirectory = Split-Path -Path $scriptPath
+    $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($scriptPath)
+    
+    # Set default log file path
+    $LogFilePath = Join-Path -Path $scriptDirectory -ChildPath "$scriptName.log"
+}
+
 # Function to log messages
 function Write-Log {
     param (
@@ -55,17 +66,18 @@ function Write-Log {
 }
 
 # Import the exception list
-if (-Not (Test-Path $ExceptionListPath)) {
-    Write-Log "ERROR: Exception list file not found at $ExceptionListPath"
-}
+if($ExceptionListPath) {
+    if (-Not (Test-Path $ExceptionListPath)) {
+        Write-Log "ERROR: Exception list file not found at $ExceptionListPath"
+    }
 
-Try{
-    $ExceptionList = Get-Content -Path $ExceptionListPath | ForEach-Object { $_.Trim() }
-    Write-Log "Loaded exception list from $ExceptionListPath"
-}catch{
-    Write-Log "Failed loaded exception list"
+    Try{
+        $ExceptionList = Get-Content -Path $ExceptionListPath -ErrorAction Break | ForEach-Object { $_.Trim() }
+        Write-Log "Loaded exception list from $ExceptionListPath"
+    }catch{
+        Write-Log "Failed loaded exception list"
+    }    
 }
-
 
 # Get the date threshold for inactivity
 $thresholdDate = (Get-Date).AddDays(-$InactivityDays)
@@ -235,6 +247,22 @@ foreach ($adUser in $ADUsers) {
 }
 
 # Output the merged users in a GridView for easy inspection
-$MergedUsers.where{$_.LatestLogonDate -and $_.LatestLogonDate -lt $thresholdDate } | `
-    Select-Object samaccountname, LastLogonDate, Entra_LastLogonDate, LatestLogonDate | `
-        out-gridview
+#$MergedUsers.where{$_.LatestLogonDate -and $_.LatestLogonDate -lt $thresholdDate } | `
+#    Select-Object samaccountname, LastLogonDate, Entra_LastLogonDate, LatestLogonDate | `
+#        out-gridview
+
+# Filter users based on LatestLogonDate being less than the threshold date
+$filteredUsers = $MergedUsers | Where-Object { $_.LatestLogonDate -and $_.LatestLogonDate -lt $thresholdDate }
+
+# Display the filtered data in a GridView
+$filteredUsers | Select-Object samaccountname, LastLogonDate, Entra_LastLogonDate, LatestLogonDate, DistinguishedName | Out-GridView
+
+# Export the filtered data to a CSV file
+$formattedThresholdDate = $thresholdDate.ToString("yyyyMMdd")
+$csvFileName = "$scriptName" + "_$formattedThresholdDate.csv"
+$csvFilePath = Join-Path -Path $scriptDirectory -ChildPath $csvFileName
+
+$filteredUsers | Select-Object samaccountname, LastLogonDate, Entra_LastLogonDate, LatestLogonDate, DistinguishedName | Export-Csv -Path $csvFilePath -NoTypeInformation -Delimiter ";"
+
+# Log the export process
+Write-Log "Data exported to $csvFilePath"
