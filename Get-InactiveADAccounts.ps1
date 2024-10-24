@@ -37,10 +37,10 @@ param (
     [Parameter(Mandatory=$true)]
     [int]$InactivityDays,
 
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory=$false)]
     [string]$ExceptionListPath,
 
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory=$false)]
     [string]$LogFilePath
 )
 
