@@ -61,8 +61,8 @@ function Write-Log {
         [string]$Message
     )
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    #Add-Content -Path $LogFilePath -Value "$timestamp - $Message"
-    Write-Output "$timestamp - $Message"
+    Add-Content -Path $LogFilePath -Value "$timestamp - $Message"
+    #Write-Output "$timestamp - $Message"
 }
 
 # Import the exception list
@@ -145,16 +145,12 @@ $domains = ([System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest(
 foreach ($domain in $domains) {
     try {
         # Get all enabled user accounts in the domain
-        $users = Get-ADUser -Filter { Enabled -eq $true } -Server $domain.Name -Properties DistinguishedName, Description, SamAccountName, DisplayName, Manager, ObjectSID, ObjectGuid, lastlogondate #, Custom-CPRNumber
+        $users = Get-ADUser -Filter { Enabled -eq $true } -Server $domain.Name -Properties DistinguishedName, Description, SamAccountName, DisplayName, Manager, ObjectSID, ObjectGuid, lastlogondate, adminDescription, ExtensionAttribute15
 
         foreach ($user in $users) {
             if ($ExceptionList -contains $user.ObjectSID.Value) {
-                #Write-Log "Skipping user $($user.SamAccountName) - found in exception list"
+                Write-Log "Skipping user $($user.SamAccountName) - found in exception list"
             } else {
-                #$manager = $null
-                #if ($user.Manager) {
-                #    $manager = (Get-ADUser -Identity $user.Manager -Server $domain.Name).Name
-                #}
 
                 # Reverse Distinguished Name
                 # Split the string, reverse the array, and join it back together
@@ -163,16 +159,16 @@ foreach ($domain in $domains) {
                 $reverseDN = $components -join ","
                 
                 $ADUsers += [PSCustomObject]@{
-                    DistinguishedName = $user.DistinguishedName
-                    SamAccountName    = $user.SamAccountName
-                    DisplayName       = $user.DisplayName
-                    #Manager           = $manager
-                    #HasCPR            = if($user.'Custom-CPRNumber'){$true}else{$false}
-                    LastLogonDate     = $user.lastlogondate
-                    ObjectSID         = $user.ObjectSID.Value
-                    ObjectGuid        = $user.ObjectGuid
-                    ReverseDN         = $reverseDN
-                    Description       = $user.Description
+                    DistinguishedName    = $user.DistinguishedName
+                    SamAccountName       = $user.SamAccountName
+                    DisplayName          = $user.DisplayName
+                    adminDescription     = $user.adminDescription
+                    ExtensionAttribute15 = $user.ExtensionAttribute15
+                    LastLogonDate        = $user.lastlogondate
+                    ObjectSID            = $user.ObjectSID.Value
+                    ObjectGuid           = $user.ObjectGuid
+                    ReverseDN            = $reverseDN
+                    Description          = $user.Description
                 }
             }
         }
@@ -257,7 +253,7 @@ foreach ($adUser in $ADUsers) {
 # Filter users based on LatestLogonDate being less than the threshold date
 $filteredUsers = $MergedUsers | Where-Object { $_.LatestLogonDate -and $_.LatestLogonDate -lt $thresholdDate }
 
-# Display the filtered data in a GridView
+# Display the filtered data in a GridView - 
 #$filteredUsers | Select-Object samaccountname, LastLogonDate, Entra_LastLogonDate, LatestLogonDate, ReverseDN, Description, DistinguishedName | Out-GridView
 
 # Export the filtered data to a CSV file
@@ -265,7 +261,7 @@ $formattedThresholdDate = $thresholdDate.ToString("yyyyMMdd")
 $csvFileName = "$scriptName" + "_$formattedThresholdDate.csv"
 $csvFilePath = Join-Path -Path $scriptDirectory -ChildPath $csvFileName
 
-$filteredUsers | Select-Object samaccountname, @{Name="LastLogonDate";Expression={$_.LastLogonDate.ToString("yyyy-MM-dd HH:mm:ss")}} , @{Name="Entra_LastLogonDate";Expression={$_.Entra_LastLogonDate.ToString("yyyy-MM-dd HH:mm:ss")}}, @{Name="LatestLogonDate";Expression={$_.LatestLogonDate.ToString("yyyy-MM-dd HH:mm:ss")}} , ReverseDN, Description, DistinguishedName | Export-Csv -Path $csvFilePath -NoTypeInformation -Delimiter ";"
+$filteredUsers | Select-Object samaccountname, @{Name="LastLogonDate";Expression={$_.LastLogonDate.ToString("yyyy-MM-dd HH:mm:ss")}} , @{Name="Entra_LastLogonDate";Expression={$_.Entra_LastLogonDate.ToString("yyyy-MM-dd HH:mm:ss")}}, @{Name="LatestLogonDate";Expression={$_.LatestLogonDate.ToString("yyyy-MM-dd HH:mm:ss")}} , ReverseDN, Description, adminDescription, ExtensionAttribute15, DistinguishedName | Export-Csv -Path $csvFilePath -NoTypeInformation -Delimiter ";"
 
 # Log the export process
 Write-Log "Data exported to $csvFilePath"
